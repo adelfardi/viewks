@@ -9,6 +9,9 @@ export interface PickItem {
   group?: string
   badge?: string
   badgeTone?: 'bad' | 'info' | 'ok'
+  /** small status dot before the label (e.g. cluster reachable or not) */
+  dot?: 'ok' | 'bad' | 'muted'
+  dotTitle?: string
 }
 
 interface Props {
@@ -67,6 +70,7 @@ export function Picker({ label, value, items, placeholder, width = 360, disabled
         }}
       >
         <span className="picker-label">{label}</span>
+        {current?.dot && <span className={cls('dot', current.dot)} title={current.dotTitle} />}
         <span className="picker-value">{current?.label ?? (value || placeholder)}</span>
         {current?.badge && <span className={cls('badge', current.badgeTone)}>{current.badge}</span>}
         <ChevronDown size={14} />
@@ -109,6 +113,7 @@ export function Picker({ label, value, items, placeholder, width = 360, disabled
                     onMouseEnter={() => setIdx(i)}
                     onClick={() => pick(it.key)}
                   >
+                    {it.dot && <span className={cls('dot', it.dot)} title={it.dotTitle} />}
                     <div className="grow ellipsis">
                       <div className="ellipsis">{it.label}</div>
                       {it.sub && <div className="pick-sub ellipsis">{it.sub}</div>}

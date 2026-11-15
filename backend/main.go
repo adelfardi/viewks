@@ -18,6 +18,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/go-logr/logr"
+	"k8s.io/klog/v2"
 )
 
 // Settings are the user-level choices of the UI, persisted on disk.
@@ -83,6 +86,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nVariables : AWS_DIR (~/.aws), KUBE_DIR (~/.kube), DATA_DIR (~/.viewks)\n")
 	}
 	flag.Parse()
+	if !verbose {
+		// client-go logs transient errors (e.g. unreachable clusters) through klog;
+		// they are already reported in the UI, keep the terminal clean.
+		klog.SetLogger(logr.Discard())
+	}
 	if *showVersion {
 		fmt.Printf("viewks %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 		return

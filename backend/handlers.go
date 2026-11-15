@@ -50,6 +50,7 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	// kube
 	mux.HandleFunc("GET /api/contexts", a.handleContexts)
+	mux.HandleFunc("GET /api/contexts/reachability", a.handleReachability)
 	mux.HandleFunc("GET /api/ctx/{ctx}/overview", a.handleOverview)
 	mux.HandleFunc("GET /api/ctx/{ctx}/namespaces", a.handleNamespaces)
 	mux.HandleFunc("GET /api/ctx/{ctx}/api-resources", a.handleAPIResources)

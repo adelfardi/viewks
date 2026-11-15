@@ -33,6 +33,7 @@ export default function App() {
   const [status, setStatus] = useState<ProfileStatus | null>(null)
   const [login, setLogin] = useState<LoginState | null>(null)
   const [statusTick, setStatusTick] = useState(0)
+  const [reach, setReach] = useState<Record<string, { reachable: boolean; error?: string; ms: number }>>({})
   const toastId = useRef(0)
   const [theme, setTheme] = useLocalStorage<'system' | 'light' | 'dark'>('viewks.theme', 'system')
   useEffect(() => {
@@ -67,6 +68,12 @@ export default function App() {
       fail(e)
     }
   }, [fail, setCtx])
+
+  const loadReach = useCallback((refresh = false) => {
+    api.reachability(refresh).then(setReach).catch(() => setReach({}))
+  }, [])
+  useEffect(() => loadReach(), [loadReach])
+  useInterval(() => loadReach(), 60_000)
 
   useEffect(() => {
     api.settings().then(setSettingsState).catch(fail)
@@ -283,9 +290,14 @@ export default function App() {
                 group: c.file,
                 badge: c.prod ? 'PROD' : c.isEks ? 'EKS' : undefined,
                 badgeTone: c.prod ? 'bad' : 'info',
+                dot: !reach[c.name] ? 'muted' : reach[c.name].reachable ? 'ok' : 'bad',
+                dotTitle: !reach[c.name] ? 'test en cours…' : reach[c.name].reachable ? `joignable (${reach[c.name].ms} ms)` : `injoignable : ${reach[c.name].error}`,
               }))}
               onPick={(k) => setCtx(k)}
-              onOpen={loadContexts}
+              onOpen={() => {
+                loadContexts()
+                loadReach(true)
+              }}
             />
             <Picker
               label="Namespace"

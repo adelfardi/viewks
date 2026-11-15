@@ -41,7 +41,8 @@ else
 endif
 
 install: build ## installe dans $(PREFIX)
-	install -D -m 755 $(BIN) $(PREFIX)/viewks
+	@mkdir -p $(PREFIX)
+	cp $(BIN) $(PREFIX)/.viewks.tmp && chmod 755 $(PREFIX)/.viewks.tmp && mv -f $(PREFIX)/.viewks.tmp $(PREFIX)/viewks
 	@echo "✓ installé : $(PREFIX)/viewks — lance : viewks"
 
 uninstall:

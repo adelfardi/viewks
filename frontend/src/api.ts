@@ -122,6 +122,8 @@ export const api = {
   saveSettings: (s: Settings) => request<Settings>('PUT', '/api/settings', s),
 
   contexts: () => request<{ contexts: ContextInfo[]; current: string; errors: string[] }>('GET', '/api/contexts'),
+  reachability: (refresh = false) =>
+    request<Record<string, { reachable: boolean; error?: string; ms: number }>>('GET', `/api/contexts/reachability${refresh ? '?refresh=1' : ''}`),
   namespaces: (ctx: string) => request<{ items: string[]; restricted: boolean }>('GET', `${ctxBase(ctx)}/namespaces`),
   apiResources: (ctx: string) => request<APIResource[]>('GET', `${ctxBase(ctx)}/api-resources`),
   overview: (ctx: string, ns: string) => request<Overview>('GET', `${ctxBase(ctx)}/overview?${nsq(ns)}`),
