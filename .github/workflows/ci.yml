@@ -180,6 +180,7 @@ jobs:
           load: true
           push: false
           tags: ${{ env.SCAN_TAG }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
@@ -225,6 +226,7 @@ jobs:
           context: ${{ matrix.component }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.component }}
           provenance: mode=max

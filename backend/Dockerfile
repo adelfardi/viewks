@@ -4,7 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY web ./web
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/viewks .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/viewks .
 
 FROM alpine:3.22
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata \
