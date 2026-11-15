@@ -1,0 +1,10 @@
+# Utiliser les images publiées par la CI au lieu de builder localement :
+#   GHCR_OWNER=<ton-user-github> docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+# (images privées : echo $GH_TOKEN | docker login ghcr.io -u <user> --password-stdin)
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER requis}/viewks-backend:${VIEWKS_TAG:-latest}
+  frontend:
+    build: !reset null
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER requis}/viewks-frontend:${VIEWKS_TAG:-latest}

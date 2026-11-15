@@ -1,0 +1,108 @@
+name: Release
+
+# git tag v1.2.3 && git push origin v1.2.3
+#   → binaires linux/macOS/windows (amd64+arm64) publiés en GitHub Release,
+#     avec SHA256SUMS et attestation de provenance (gh attestation verify).
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag existant à (re)publier, ex. v1.2.3'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  GOVULNCHECK_VERSION: v1.9.0
+
+jobs:
+  build:
+    name: Build & checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Vérifier le format du tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "tag invalide: $TAG"; exit 1; }
+
+      - name: Front (embarqué dans le binaire)
+        run: |
+          cd frontend && npm ci && npm run build && npm audit --omit=dev --audit-level=high
+          cd .. && find backend/web -mindepth 1 ! -name .gitkeep -delete && cp -r frontend/dist/. backend/web/
+
+      - name: Checks Go
+        working-directory: backend
+        run: |
+          go vet ./...
+          go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+      - name: Cross-compilation (6 plateformes) + SHA256SUMS
+        run: scripts/dist.sh "$TAG"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # créer la release
+      id-token: write # attestation (OIDC Sigstore)
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Attestation de provenance (SLSA)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/viewks_*.tar.gz
+            dist/viewks_*.zip
+
+      - name: Créer / mettre à jour la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prerelease=""
+          [[ "$TAG" == *-* ]] && prerelease="--prerelease"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag --generate-notes --title "viewks $TAG" $prerelease
+          fi
+          {
+            echo "### viewks $TAG publié"
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

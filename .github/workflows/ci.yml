@@ -1,0 +1,252 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * 1' # re-scan hebdo : nouvelles CVE sur des images inchangées
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  TRIVY_VERSION: v0.76.2
+  GOVULNCHECK_VERSION: v1.9.0
+
+# Toutes les actions sont épinglées par SHA de commit (supply chain : les tags sont réécrivables,
+# cf. compromission des tags de trivy-action en mars 2026). Dependabot met les SHA à jour.
+
+jobs:
+  # ------------------------------------------------------------------ build & tests
+  backend:
+    name: Backend · vet / build / govulncheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+      - name: govulncheck (vulnérabilités réellement atteignables dans le code)
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  frontend:
+    name: Frontend · typecheck / build / npm audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: npm audit (dépendances embarquées)
+        run: npm audit --omit=dev --audit-level=high
+
+  # ------------------------------------------------------------------ SAST
+  codeql:
+    name: CodeQL · ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - if: matrix.language == 'go'
+        working-directory: backend
+        run: go build ./...
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+
+  # ------------------------------------------------------------------ Trivy : dépôt
+  trivy-repo:
+    name: Trivy · dépôt (deps, secrets, IaC)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Scan complet → onglet Security
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-repo.sarif
+          exit-code: '0'
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && hashFiles('trivy-repo.sarif') != ''
+        with:
+          sarif_file: trivy-repo.sarif
+          category: trivy-repo
+      - name: Gate — secrets, CVE critiques/hautes corrigeables, misconfig HIGH
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
+  # ------------------------------------------------------------------ images : build → scan → push → sign
+  images:
+    name: Image · ${{ matrix.component }}
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push ghcr.io
+      security-events: write # SARIF Trivy
+      id-token: write # signature cosign keyless (OIDC)
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    env:
+      # push sur main / tag / lancement manuel ; jamais sur PR ni sur le scan planifié
+      PUSH: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+      SCAN_TAG: viewks-${{ matrix.component }}:scan
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Nom de l'image (ghcr exige des minuscules)
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/viewks-${{ matrix.component }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # 1) build local, chargé dans le daemon pour être scanné AVANT toute publication
+      - name: Build (local)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.component }}
+          load: true
+          push: false
+          tags: ${{ env.SCAN_TAG }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      # 2) scan Trivy de l'image
+      - name: Trivy image → onglet Security
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.SCAN_TAG }}
+          format: sarif
+          output: trivy-${{ matrix.component }}.sarif
+          exit-code: '0'
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.component)) != ''
+        with:
+          sarif_file: trivy-${{ matrix.component }}.sarif
+          category: trivy-image-${{ matrix.component }}
+      - name: Gate — CVE CRITICAL/HIGH corrigeables
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          skip-setup-trivy: true
+          scan-type: image
+          image-ref: ${{ env.SCAN_TAG }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
+      # 3) publication (même build, servi par le cache) + SBOM et provenance SLSA
+      - if: env.PUSH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        if: env.PUSH == 'true'
+        name: Push ghcr.io
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.component }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          provenance: mode=max
+          sbom: true
+
+      # 4) signature keyless (Sigstore) : vérifiable avec `cosign verify`
+      - if: env.PUSH == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - if: env.PUSH == 'true'
+        name: Signature cosign
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - if: env.PUSH == 'true'
+        name: Résumé
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### ${IMAGE}"
+            echo "Digest : \`${DIGEST}\`"
+            echo '```'
+            echo "${TAGS}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

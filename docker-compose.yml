@@ -1,0 +1,31 @@
+# Lancement :  HOME=$HOME docker compose up -d --build   puis http://localhost:8088
+services:
+  backend:
+    build: ./backend
+    image: viewks-backend
+    restart: unless-stopped
+    # L'image tourne en non-root (65532). Docker *rootless* : root du conteneur = ton utilisateur
+    # sur l'hôte, nécessaire pour écrire ~/.aws/sso/cache. Docker classique : VIEWKS_USER="$(id -u):$(id -g)".
+    user: "${VIEWKS_USER:-0:0}"
+    environment:
+      # même chemin que sur l'hôte : les chemins absolus des kubeconfig restent valides
+      HOME: ${HOME}
+      AWS_DIR: ${HOME}/.aws
+      KUBE_DIR: ${HOME}/.kube
+      DATA_DIR: /data
+    volumes:
+      - ${HOME}/.aws:${HOME}/.aws          # rw : écriture du cache SSO (partagé avec l'aws cli)
+      - ${HOME}/.kube:${HOME}/.kube:ro
+      - viewks-data:/data
+
+  frontend:
+    build: ./frontend
+    image: viewks-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:${VIEWKS_PORT:-8088}:8080"   # exposé uniquement en local
+
+volumes:
+  viewks-data:

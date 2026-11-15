@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ['*'] }
+
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule: { interval: weekly }
+    groups:
+      k8s: { patterns: ['k8s.io/*', 'sigs.k8s.io/*'] }
+      aws: { patterns: ['github.com/aws/*'] }
+      golang-x: { patterns: ['golang.org/x/*'] }
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    groups:
+      minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule: { interval: weekly }

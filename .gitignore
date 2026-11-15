@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.sarif
+backend/web/*
+!backend/web/.gitkeep
+bin/
+dist/
+.idea/
