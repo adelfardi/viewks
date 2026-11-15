@@ -7,7 +7,7 @@ COPY web ./web
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/viewks .
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata \
  && mkdir -p /data && chown 65532:65532 /data
 COPY --from=build /out/viewks /usr/local/bin/viewks
