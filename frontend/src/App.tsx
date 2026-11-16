@@ -158,15 +158,25 @@ export default function App() {
   const ctxInfo = contexts.find((c) => c.name === ctx)
   const ns = ctx in nsByCtx ? nsByCtx[ctx] : ctxInfo?.namespace ?? ''
 
+  // reset the view only when the context really changes
   useEffect(() => {
     setSel(null)
     setAuthIssue(null)
     setNamespaces([])
+  }, [ctx])
+
+  // (re)load namespaces on context change and after AWS status checks (e.g. re-login);
+  // must not touch the open drawer: statusTick fires every 60 s
+  useEffect(() => {
     if (!ctx) return
+    let alive = true
     api
       .namespaces(ctx)
-      .then((r) => setNamespaces(r.items))
+      .then((r) => alive && setNamespaces(r.items))
       .catch(fail)
+    return () => {
+      alive = false
+    }
   }, [ctx, fail, statusTick])
 
   useInterval(() => setTick((t) => t + 1), auto ? 10_000 : null)
